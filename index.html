@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Ranking Série A 2026 - Rolagem Contínua Lenta</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: Arial, sans-serif; background: #000; color: #fff; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+        .aviso { background: #ffcc00; color: #000; font-weight: bold; font-size: 11px; padding: 8px; text-align: center; position: sticky; top: 0; z-index: 10; text-transform: uppercase; line-height: 1.2; }
+        
+        /* Removido o scroll-behavior smooth para permitir movimentação por JavaScript pixel a pixel */
+        .container { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; padding-bottom: 80px; }
+        
+        table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+        td { border-bottom: 1px solid #1a1a1a; text-align: center; font-size: 11px; height: 65px; padding: 5px 0; }
+        th { background: #111; font-size: 10px; color: #777; padding: 8px; position: sticky; top: 0; z-index: 5; }
+        .escudo, .gift-img { width: 35px; height: 35px; object-fit: contain; vertical-align: middle; cursor: pointer; background: #222; border-radius: 4px; }
+        .nome-time { font-weight: bold; font-size: 12px; margin-left: 5px; display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100px; text-align: left; }
+        .titulos-badge { font-size: 10px; color: #ffcc00; font-weight: bold; background: rgba(255, 204, 0, 0.1); padding: 2px 5px; border-radius: 3px; margin-left: 5px; margin-top: 2px; display: inline-block; }
+        .pontos { color: #00ff00; font-weight: bold; font-size: 18px; }
+        .btn-add { background: #28a745; color: #fff; border: none; width: 45px; height: 45px; border-radius: 8px; font-weight: bold; cursor: pointer; font-size: 22px; }
+        #campeaoOverlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.98); z-index: 100; flex-direction: column; justify-content: center; align-items: center; text-align: center; }
+        .vitoria-escudo { width: 150px; height: 150px; animation: flash 2s infinite; margin: 20px; }
+        @keyframes flash { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+        #hiddenFileInput { display: none; }
+    </style>
+</head>
+<body>
+
+    <input type="file" id="hiddenFileInput" accept="image/*">
+
+    <div id="campeaoOverlay">
+        <div id="statusMeta" style="color: #ffcc00; font-size: 16px; font-weight: bold; margin-bottom: 10px;">🏆 RODADA FINALIZADA! 🏆</div>
+        <img id="vitoriaEscudo" class="vitoria-escudo" src="">
+        <div id="vitoriaNome" style="font-size: 28px; font-weight: bold; color: #ffcc00;">TIME</div>
+        <div id="vitoriaTitulos" style="font-size: 20px;">Vitórias: 0 / 50</div>
+        <div id="tempoTexto" style="margin-top: 15px; color: #888;">Próxima rodada em 20s...</div>
+    </div>
+
+    <div class="aviso">
+        META 500 PONTOS GANHA A RODADA 🏁 <br>
+        <span style="font-size: 10px; color: #d31b1b;">PRIMEIRO TIME QUE CHEGAR EM 50 VITÓRIAS ZERA TUDO!</span>
+    </div>
+
+    <div class="container" id="scrollContainer">
+        <table>
+            <thead>
+                <tr>
+                    <th width="12%">#</th>
+                    <th width="43%">Time / Vitórias</th>
+                    <th width="15%">Pts</th>
+                    <th width="15%">Gif</th>
+                    <th width="15%">+</th>
+                </tr>
+            </thead>
+            <tbody id="tableBody"></tbody>
+        </table>
+    </div>
+
+    <script>
+        const listaPadrao = ["Athletico PR", "Atlético MG", "Bahia", "Botafogo", "Bragantino", "Chapecoense", "Corinthians", "Coritiba", "Cruzeiro", "Flamengo", "Fluminense", "Grêmio", "Internacional", "Mirassol", "Palmeiras", "Remo", "Santos", "São Paulo", "Vasco", "Vitória"];
+        
+        let targetId = null;
+        let targetField = null;
+        let scrollAnimationId = null;
+        let userTouchTimeout = null;
+        let scrollDirecao = 1; // 1 = descendo, -1 = subindo
+        let estaBloqueadoPorVitoria = false;
+        let isWaitingAtEnd = false;
+
+        let teams = JSON.parse(localStorage.getItem('rankingTikTok_V5')) || listaPadrao.map((nome, i) => ({
+            id: i, name: nome, points: 0, titles: 0, meta: 500,
+            logo: "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7",
+            gift: "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"
+        }));
+
+        function salvar() { localStorage.setItem('rankingTikTok_V5', JSON.stringify(teams)); }
+
+        function render() {
+            const body = document.getElementById('tableBody');
+            const temPontos = teams.some(t => t.points > 0);
+            teams.sort((a, b) => b.points - a.points || b.titles - a.titles || a.name.localeCompare(b.name));
+            body.innerHTML = '';
+            teams.forEach((t, i) => {
+                const tr = document.createElement('tr');
+                const pos = i + 1;
+                tr.innerHTML = `
+                    <td style="color:${pos === 1 && temPontos ? '#ffcc00' : '#fff'}; font-weight:bold; font-size: 14px;">${pos === 1 && temPontos ? '🏆' : pos}</td>
+                    <td style="text-align: left; padding-left: 10px;">
+                        <div style="display: flex; align-items: center;">
+                            <img src="${t.logo}" class="escudo" onclick="setImg(${t.id}, 'logo')">
+                            <div>
+                                <span class="nome-time" onclick="setImg(${t.id}, 'logo')">${t.name}</span>
+                                <span class="titulos-badge">🏅 ${t.titles} / 50</span>
+                            </div>
+                        </div>
+                    </td>
+                    <td class="pontos">${t.points}</td>
+                    <td><img src="${t.gift}" class="gift-img" onclick="setImg(${t.id}, 'gift')"></td>
+                    <td><button class="btn-add" onclick="add(${t.id})">+</button></td>
+                `;
+                body.appendChild(tr);
+            });
+            salvar();
+        }
+
+        function add(id) {
+            const t = teams.find(x => x.id === id);
+            t.points++;
+            if (t.points >= t.meta) { render(); win(t); } else { render(); }
+        }
+
+        function win(t) {
+            t.titles++;
+            estaBloqueadoPorVitoria = true;
+            pararAutoScroll();
+            const ov = document.getElementById('campeaoOverlay');
+            document.getElementById('vitoriaNome').innerText = t.name;
+            document.getElementById('vitoriaEscudo').src = t.logo;
+            document.getElementById('vitoriaTitulos').innerText = `Vitórias acumuladas: ${t.titles} / 50`;
+            ov.style.display = 'flex';
+            if (t.titles >= 50) {
+                document.getElementById('statusMeta').innerText = "⭐ O GRANDE CAMPEÃO! ⭐";
+                setTimeout(() => { teams.forEach(x => { x.points = 0; x.titles = 0; }); ov.style.display = 'none'; estaBloqueadoPorVitoria = false; render(); iniciarAutoScroll(); }, 30000);
+            } else {
+                setTimeout(() => { teams.forEach(x => x.points = 0); ov.style.display = 'none'; estaBloqueadoPorVitoria = false; render(); iniciarAutoScroll(); }, 20000);
+            }
+            salvar();
+        }
+
+        function setImg(id, field) {
+            targetId = id;
+            targetField = field;
+            const modo = confirm("OK: GALERIA | Cancelar: URL");
+            if (modo) {
+                document.getElementById('hiddenFileInput').click();
+            } else {
+                const url = prompt("Link da imagem:");
+                if (url) {
+                    teams.find(x => x.id === targetId)[targetField] = url;
+                    render();
+                }
+            }
+        }
+
+        document.getElementById('hiddenFileInput').onchange = e => {
+            const file = e.target.files;
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = () => {
+                    teams.find(x => x.id === targetId)[targetField] = reader.result;
+                    render();
+                };
+                reader.readAsDataURL(file);
+            }
+        };
+
+        // ROLAGEM ULTRA LENTA E FLUIDA (CÂMERA LENTA CONTÍNUA)
+        function darScrollMecanico() {
+            if (estaBloqueadoPorVitoria || isWaitingAtEnd) return;
+
+            const painel = document.getElementById('scrollContainer');
+            const alturaMax = painel.scrollHeight - painel.clientHeight;
+
+            // Altere o valor de "0.4" para mais ou para menos para ajustar a velocidade exata
+            painel.scrollTop += (0.4 * scrollDirecao);
+
+            // Se bateu no fundo (fim da lista)
+            if (scrollDirecao === 1 && painel.scrollTop >= alturaMax - 1) {
+                isWaitingAtEnd = true;
+                setTimeout(() => {
+                    scrollDirecao = -1; // Muda para subir
+                    isWaitingAtEnd = false;
+                    darScrollMecanico();
+                }, 2000); // Pausa de 2 segundos no fundo antes de subir
+                return;
+            }
+
+            // Se bateu no topo (início da lista)
+            if (scrollDirecao === -1 && painel.scrollTop <= 0) {
+                isWaitingAtEnd = true;
+                setTimeout(() => {
+                    scrollDirecao = 1; // Muda para descer
+                    isWaitingAtEnd = false;
+                    darScrollMecanico();
+                }, 2000); // Pausa de 2 segundos no topo antes de descer
+                return;
+            }
+
+            scrollAnimationId = requestAnimationFrame(darScrollMecanico);
+        }
+
+        function iniciarAutoScroll() {
+            if (estaBloqueadoPorVitoria) return;
+            if (!scrollAnimationId) {
+                scrollAnimationId = requestAnimationFrame(darScrollMecanico);
+            }
+        }
+
+        function pararAutoScroll() {
+            if (scrollAnimationId) {
+                cancelAnimationFrame(scrollAnimationId);
+                scrollAnimationId = null;
+            }
+        }
+
+        function gerenciarInteracaoUsuario() {
+            if (estaBloqueadoPorVitoria) return;
+            
+            pararAutoScroll(); 
+            clearTimeout(userTouchTimeout);
+
+            // Reinicia a rolagem contínua após 2 segundos sem nenhum toque
+            userTouchTimeout = setTimeout(() => {
+                iniciarAutoScroll();
+            }, 2000);
+        }
+
+        const containerElement = document.getElementById('scrollContainer');
+        containerElement.addEventListener('touchstart', gerenciarInteracaoUsuario, { passive: true });
+        containerElement.addEventListener('mousedown', gerenciarInteracaoUsuario);
+        // O evento scroll por toque do usuário também aciona a pausa preventiva
+        containerElement.addEventListener('scroll', function() {
+            if(scrollAnimationId === null && !estaBloqueadoPorVitoria) {
+                gerenciarInteracaoUsuario();
+            }
+        });
+
+        render();
+        iniciarAutoScroll();
+    </script>
+</body>
+</html>
